@@ -1,0 +1,864 @@
+// Wemakeover — Prisma schema (Neon PostgreSQL)
+//
+// Decisions:
+// - Primary keys: UUID
+// - Line items (cart/booking/order services): normalized tables
+// - Snapshots & loose nests (address at booking time, metadata, site settings): Json
+// - User.isVerified (fixed typo from Mongo isVerfied)
+// - MongoDB removed at Phase 6 cutover; Neon is the sole app database
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Sequences (replaces counters collection) ───────────────────────────────
+
+model Counter {
+  id  String @id // e.g. "orderNumber", "enquiryNumber"
+  seq Int    @default(0)
+
+  @@map("counters")
+}
+
+// ─── Auth / users ───────────────────────────────────────────────────────────
+
+enum UserRole {
+  user
+  admin
+}
+
+model User {
+  id                        String    @id @default(uuid())
+  name                      String
+  email                     String?   @unique
+  phoneNumber               String?   @unique @map("phone_number")
+  password                  String?
+  googleId                  String?   @unique @map("google_id")
+  passwordChangedAt         DateTime? @map("password_changed_at")
+  role                      UserRole  @default(user)
+  isVerified                Boolean   @default(false) @map("is_verified")
+  isActive                  Boolean   @default(true) @map("is_active")
+  createdById               String?   @map("created_by_id")
+  lastLoginAt               DateTime? @map("last_login_at")
+  onboardingToken           String?   @map("onboarding_token")
+  onboardingTokenExpiresAt  DateTime? @map("onboarding_token_expires_at")
+  onboardingTokenUsed       Boolean   @default(false) @map("onboarding_token_used")
+  onboardingTokenInvalidated Boolean  @default(false) @map("onboarding_token_invalidated")
+  onboardingTokenCreatedAt  DateTime? @map("onboarding_token_created_at")
+  fcmToken                  String?   @map("fcm_token")
+  referralCode              String?   @unique @map("referral_code")
+  referredById              String?   @map("referred_by_id")
+  wmCoinBalance             Int       @default(0) @map("wm_coin_balance")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+
+  createdBy                 User?     @relation("UserCreatedBy", fields: [createdById], references: [id])
+  createdUsers              User[]    @relation("UserCreatedBy")
+  referredBy                User?     @relation("UserReferrals", fields: [referredById], references: [id])
+  referees                  User[]    @relation("UserReferrals")
+
+  addresses                 Address[]
+  cart                      Cart?
+  bookings                  Booking[] @relation("UserBookings")
+  orders                    Order[]
+  payments                  Payment[]
+  reviews                   Review[]  @relation("UserReviews")
+  reviewResponses           Review[]  @relation("ReviewResponder")
+  notifications             Notification[]
+  couponsCreated            Coupon[]  @relation("CouponCreatedBy")
+  couponsUpdated            Coupon[]  @relation("CouponUpdatedBy")
+  couponRedemptions         CouponRedemption[]
+  categoriesCreated         Category[] @relation("CategoryCreatedBy")
+  categoriesUpdated         Category[] @relation("CategoryUpdatedBy")
+  servicesCreated           Service[]  @relation("ServiceCreatedBy")
+  servicesUpdated           Service[]  @relation("ServiceUpdatedBy")
+  dailySlotsCreated         DailySlotDay[] @relation("DailySlotsCreatedBy")
+  workingDaysCreated        WorkingDay[] @relation("WorkingDaysCreatedBy")
+  workingDaysUpdated        WorkingDay[] @relation("WorkingDaysUpdatedBy")
+  bookingConfigsUpdated     BookingConfig[] @relation("BookingConfigUpdatedBy")
+  serviceableCitiesCreated  ServiceableCity[] @relation("ServiceableCityCreatedBy")
+  serviceableCitiesUpdated  ServiceableCity[] @relation("ServiceableCityUpdatedBy")
+  siteSettingsUpdated       SiteSettings[] @relation("SiteSettingsUpdatedBy")
+  enquiries                 Enquiry[] @relation("UserEnquiries")
+  enquiriesAssigned         Enquiry[] @relation("EnquiryAssignee")
+  cityRequests              CityRequest[] @relation("UserCityRequests")
+  cityRequestsResolved      CityRequest[] @relation("CityRequestResolver")
+  referralsAsReferrer       Referral[] @relation("ReferrerReferrals")
+  referralAsReferee         Referral?  @relation("RefereeReferral")
+  wmCoinLedger              WmCoinLedgerEntry[]
+
+  @@index([role, isActive])
+  @@index([createdAt])
+  @@index([onboardingToken])
+  @@index([referredById])
+  @@map("users")
+}
+
+// ─── Referrals / WM Coins ───────────────────────────────────────────────────
+
+enum ReferralStatus {
+  pending
+  rewarded
+  cancelled
+}
+
+enum WmCoinLedgerType {
+  referral_reward_referrer
+  referral_reward_referee
+  referral_milestone_bonus
+  referral_milestone_facial
+  admin_adjust
+  redeem
+}
+
+model Referral {
+  id                  String         @id @default(uuid())
+  referrerId          String         @map("referrer_id")
+  refereeId           String         @unique @map("referee_id")
+  referralCode        String         @map("referral_code")
+  status              ReferralStatus @default(pending)
+  qualifyingBookingId String?        @map("qualifying_booking_id")
+  rewardedAt          DateTime?      @map("rewarded_at")
+  rewardAmountEach    Int            @default(300) @map("reward_amount_each")
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
+
+  referrer User               @relation("ReferrerReferrals", fields: [referrerId], references: [id])
+  referee  User               @relation("RefereeReferral", fields: [refereeId], references: [id])
+  ledger   WmCoinLedgerEntry[]
+
+  @@index([referrerId, status])
+  @@index([status])
+  @@index([referralCode])
+  @@map("referrals")
+}
+
+model WmCoinLedgerEntry {
+  id           String           @id @default(uuid())
+  userId       String           @map("user_id")
+  amount       Int
+  balanceAfter Int              @map("balance_after")
+  type         WmCoinLedgerType
+  referralId   String?          @map("referral_id")
+  bookingId    String?          @map("booking_id")
+  note         String?
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referral Referral? @relation(fields: [referralId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([referralId])
+  @@index([bookingId])
+  @@map("wm_coin_ledger_entries")
+}
+
+// ─── Addresses ──────────────────────────────────────────────────────────────
+
+enum AddressType {
+  home
+  office
+  other
+}
+
+model Address {
+  id               String      @id @default(uuid())
+  userId           String      @map("user_id")
+  houseFlatNumber  String      @map("house_flat_number")
+  streetAreaName   String      @map("street_area_name")
+  completeAddress  String      @map("complete_address")
+  landmark         String?
+  pincode          String
+  city             String?
+  state            String?     @default("Bihar")
+  country          String      @default("India")
+  phone            String
+  isDefault        Boolean     @default(false) @map("is_default")
+  addressType      AddressType @default(home) @map("address_type")
+  isActive         Boolean     @default(true) @map("is_active")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isDefault])
+  @@index([userId, isActive])
+  @@index([pincode])
+  @@map("addresses")
+}
+
+// ─── Catalog ────────────────────────────────────────────────────────────────
+
+model Category {
+  id                  String   @id @default(uuid())
+  name                String   @unique
+  slug                String?  @unique
+  description         String?
+  image               String?
+  imagePublicId       String?  @map("image_public_id")
+  mobileImage         String?  @map("mobile_image")
+  mobileImagePublicId String?  @map("mobile_image_public_id")
+  displayOrder        Int      @default(0) @map("display_order")
+  isActive            Boolean  @default(true) @map("is_active")
+  metadata            Json?
+  createdById         String?  @map("created_by_id")
+  updatedById         String?  @map("updated_by_id")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  createdBy User?     @relation("CategoryCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?     @relation("CategoryUpdatedBy", fields: [updatedById], references: [id])
+  services  Service[]
+
+  @@index([isActive])
+  @@index([displayOrder])
+  @@map("categories")
+}
+
+enum ServiceCardType {
+  Vertical
+  Horizontal
+}
+
+model Service {
+  id                  String          @id @default(uuid())
+  name                String
+  nameLine2           String?         @map("name_line_2")
+  description         String?
+  price               Float           @default(0)
+  priceDisplay        String?         @map("price_display")
+  taxIncluded         Boolean         @default(true) @map("tax_included")
+  duration            String?
+  categoryId          String?         @map("category_id")
+  legacyCategory      String?         @map("legacy_category")
+  serviceType         String?         @map("service_type")
+  images              String[]        @default([])
+  imagePublicIds      String[]        @default([]) @map("image_public_ids")
+  mobileImage         String?         @map("mobile_image")
+  mobileImagePublicId String?         @map("mobile_image_public_id")
+  bodyContent         String?         @map("body_content")
+  ctaContent          String?         @map("cta_content")
+  cardType            ServiceCardType @default(Vertical) @map("card_type")
+  isActive            Boolean         @default(true) @map("is_active")
+  isAvailable         Boolean         @default(true) @map("is_available")
+  tags                String[]        @default([])
+  popularity          Int             @default(0)
+  /// Curated for mobile Home → Popular Near You
+  showInPopularNearYou Boolean        @default(false) @map("show_in_popular_near_you")
+  popularNearYouOrder Int             @default(0) @map("popular_near_you_order")
+  createdById         String?         @map("created_by_id")
+  updatedById         String?         @map("updated_by_id")
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+
+  category  Category?       @relation(fields: [categoryId], references: [id])
+  createdBy User?           @relation("ServiceCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?           @relation("ServiceUpdatedBy", fields: [updatedById], references: [id])
+  options   ServiceOption[]
+  reviews   Review[]
+
+  @@index([categoryId, isActive])
+  @@index([isActive, isAvailable])
+  @@index([isActive, popularity])
+  @@index([showInPopularNearYou, popularNearYouOrder])
+  @@index([price])
+  @@index([popularity])
+  @@map("services")
+}
+
+model ServiceOption {
+  id           String  @id @default(uuid())
+  serviceId    String  @map("service_id")
+  label        String
+  price        Float
+  priceDisplay String? @map("price_display")
+  sortOrder    Int     @default(0) @map("sort_order")
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([serviceId])
+  @@map("service_options")
+}
+
+// ─── Cart ───────────────────────────────────────────────────────────────────
+
+model Cart {
+  id          String    @id @default(uuid())
+  userId      String    @unique @map("user_id")
+  isActive    Boolean   @default(true) @map("is_active")
+  lastUpdated DateTime  @default(now()) @map("last_updated")
+  expiresAt   DateTime? @map("expires_at")
+  /// Cached summary: { totalServices, totalItems, subtotal, taxAmount, platformFee, total, discountAmount, ... }
+  summary     Json?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+
+  @@index([expiresAt])
+  @@index([isActive, lastUpdated])
+  @@map("carts")
+}
+
+model CartItem {
+  id           String   @id @default(uuid())
+  cartId       String   @map("cart_id")
+  serviceId    String   @map("service_id") // snapshot id (string), not always FK
+  cardHeader   String   @map("card_header")
+  description  String?
+  price        Float
+  img          String?
+  duration     String?
+  taxIncluded  Boolean  @default(true) @map("tax_included")
+  category     String?
+  serviceType  String?  @map("service_type")
+  optionLabel  String?  @map("option_label")
+  optionIndex  Int?     @map("option_index")
+  quantity     Int      @default(1)
+  subtotal     Float    @default(0)
+  addedAt      DateTime @default(now()) @map("added_at")
+  lastModified DateTime @default(now()) @map("last_modified")
+
+  cart Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  @@index([cartId])
+  @@index([serviceId])
+  @@map("cart_items")
+}
+
+// ─── Coupons ────────────────────────────────────────────────────────────────
+
+enum CouponType {
+  percentage
+  flat
+}
+
+model Coupon {
+  id            String     @id @default(uuid())
+  code          String     @unique
+  description   String     @default("")
+  type          CouponType
+  value         Float
+  maxDiscount   Float?     @map("max_discount")
+  minOrderValue Float      @default(0) @map("min_order_value")
+  startsAt      DateTime?  @map("starts_at")
+  endsAt        DateTime?  @map("ends_at")
+  usageLimit    Int?       @map("usage_limit")
+  usageCount    Int        @default(0) @map("usage_count")
+  perUserLimit  Int        @default(1) @map("per_user_limit")
+  isActive      Boolean    @default(true) @map("is_active")
+  createdById   String?    @map("created_by_id")
+  updatedById   String?    @map("updated_by_id")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  createdBy   User?              @relation("CouponCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?              @relation("CouponUpdatedBy", fields: [updatedById], references: [id])
+  redemptions CouponRedemption[]
+  bookings    Booking[]
+
+  @@index([isActive, startsAt, endsAt])
+  @@map("coupons")
+}
+
+model CouponRedemption {
+  id             String   @id @default(uuid())
+  couponId       String   @map("coupon_id")
+  couponCode     String   @map("coupon_code")
+  userId         String   @map("user_id")
+  bookingId      String?  @map("booking_id")
+  orderNumber    String?  @map("order_number")
+  discountAmount Float    @map("discount_amount")
+  subtotal       Float
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  coupon  Coupon   @relation(fields: [couponId], references: [id])
+  user    User     @relation(fields: [userId], references: [id])
+  booking Booking? @relation(fields: [bookingId], references: [id])
+
+  @@index([couponId, userId])
+  @@index([userId])
+  @@map("coupon_redemptions")
+}
+
+// ─── Bookings ───────────────────────────────────────────────────────────────
+
+enum BookingStatus {
+  pending
+  confirmed
+  in_progress
+  completed
+  cancelled
+  no_show
+}
+
+enum PaymentStatus {
+  pending
+  processing
+  completed
+  failed
+  refunded
+  partially_refunded
+  cancelled
+}
+
+enum BookingPaymentMethod {
+  online
+  cod
+  wallet
+  upi
+  card
+  netbanking
+}
+
+model Booking {
+  id              String               @id @default(uuid())
+  orderNumber     String               @unique @map("order_number")
+  userId          String               @map("user_id")
+  status          BookingStatus        @default(pending)
+  paymentStatus   PaymentStatus        @default(pending) @map("payment_status")
+  /// { date, slot, duration, address: {...} }
+  bookingDetails  Json                 @map("booking_details")
+  /// { subtotal, taxAmount, discountAmount, discountedSubtotal, couponCode, platformFee, totalAmount, currency }
+  pricing         Json
+  /// { razorpayOrderId, razorpayPaymentId, razorpaySignature, paymentMethod, paidAt, refundAmount, refundedAt }
+  paymentDetails  Json?                @map("payment_details")
+  cancellationDetails Json?            @map("cancellation_details")
+  reschedulingDetails Json?            @map("rescheduling_details")
+  notes           Json?
+  metadata        Json?
+  reviewDetails   Json?                @map("review_details")
+  couponId        String?              @map("coupon_id")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+
+  user        User               @relation("UserBookings", fields: [userId], references: [id])
+  coupon      Coupon?            @relation(fields: [couponId], references: [id])
+  services    BookingService[]
+  reviews     Review[]
+  notifications Notification[]
+  redemptions CouponRedemption[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([paymentStatus, createdAt])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([couponId])
+  @@map("bookings")
+}
+
+model BookingService {
+  id          String  @id @default(uuid())
+  bookingId   String  @map("booking_id")
+  serviceId   String? @map("service_id")
+  name        String
+  description String?
+  price       Float
+  quantity    Int     @default(1)
+  image       String?
+  category    String?
+  duration    Int? // minutes
+  optionLabel String? @map("option_label")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@map("booking_services")
+}
+
+// ─── Orders (used by payment/dashboard; kept alongside Booking) ─────────────
+
+enum OrderStatus {
+  pending
+  confirmed
+  in_progress
+  completed
+  cancelled
+  refunded
+}
+
+model Order {
+  id            String        @id @default(uuid())
+  userId        String        @map("user_id")
+  orderNumber   String        @unique @map("order_number")
+  paymentId     String?       @unique @map("payment_id")
+  status        OrderStatus   @default(pending)
+  paymentStatus PaymentStatus @default(pending) @map("payment_status")
+  pricing       Json
+  booking       Json // { date, slot, duration, address, notes }
+  provider      Json?
+  timeline      Json?
+  feedback      Json?
+  cancellation  Json?
+  metadata      Json?
+  completedAt   DateTime?     @map("completed_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  user     User           @relation(fields: [userId], references: [id])
+  payment  Payment?       @relation(fields: [paymentId], references: [id])
+  services OrderService[]
+
+  @@index([userId, status])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+model OrderService {
+  id          String  @id @default(uuid())
+  orderId     String  @map("order_id")
+  serviceId   String? @map("service_id")
+  name        String
+  description String?
+  price       Float
+  quantity    Int     @default(1)
+  image       String?
+  category    String?
+  duration    Int?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_services")
+}
+
+// ─── Payments ───────────────────────────────────────────────────────────────
+
+enum RazorpayPaymentStatus {
+  created
+  attempted
+  paid
+  failed
+  cancelled
+}
+
+model Payment {
+  id                String                @id @default(uuid())
+  userId            String                @map("user_id")
+  razorpayOrderId   String                @unique @map("razorpay_order_id")
+  razorpayPaymentId String?               @map("razorpay_payment_id")
+  razorpaySignature String?               @map("razorpay_signature")
+  amount            Float
+  currency          String                @default("INR")
+  status            RazorpayPaymentStatus @default(created)
+  paymentMethod     String?               @map("payment_method")
+  orderDetails      Json?                 @map("order_details")
+  bookingDetails    Json?                 @map("booking_details")
+  metadata          Json?
+  paidAt            DateTime?             @map("paid_at")
+  failedAt          DateTime?             @map("failed_at")
+  expiresAt         DateTime?             @map("expires_at")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  user  User   @relation(fields: [userId], references: [id])
+  order Order?
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([expiresAt])
+  @@index([razorpayPaymentId])
+  @@map("payments")
+}
+
+// ─── Reviews ────────────────────────────────────────────────────────────────
+
+enum ReviewType {
+  review
+  complaint
+}
+
+enum ReviewStatus {
+  pending
+  reviewed
+  resolved
+  dismissed
+  published
+  hidden
+}
+
+model Review {
+  id                   String       @id @default(uuid())
+  userId               String?      @map("user_id")
+  bookingId            String?      @map("booking_id")
+  orderNumber          String?      @map("order_number")
+  serviceId            String?      @map("service_id")
+  customerDetails      Json?        @map("customer_details")
+  serviceName          String?      @map("service_name")
+  rating               Float?
+  comment              String?
+  type                 ReviewType   @default(review)
+  complaintCategory    String?      @map("complaint_category")
+  status               ReviewStatus @default(pending)
+  adminResponse        String?      @map("admin_response")
+  respondedById        String?      @map("responded_by_id")
+  respondedAt          DateTime?    @map("responded_at")
+  source               String?
+  isEdited             Boolean      @default(false) @map("is_edited")
+  editedAt             DateTime?    @map("edited_at")
+  editWindowExpiresAt  DateTime?    @map("edit_window_expires_at")
+  userNotifiedOfResponse Boolean    @default(false) @map("user_notified_of_response")
+  userNotifiedAt       DateTime?    @map("user_notified_at")
+  createdAt            DateTime     @default(now()) @map("created_at")
+  updatedAt            DateTime     @updatedAt @map("updated_at")
+
+  user        User?          @relation("UserReviews", fields: [userId], references: [id])
+  booking     Booking?       @relation(fields: [bookingId], references: [id])
+  service     Service?       @relation(fields: [serviceId], references: [id])
+  respondedBy User?          @relation("ReviewResponder", fields: [respondedById], references: [id])
+  notifications Notification[]
+
+  @@index([userId])
+  @@index([bookingId])
+  @@index([status])
+  @@index([rating])
+  @@index([type, status])
+  @@index([type, rating])
+  @@index([createdAt])
+  @@map("reviews")
+}
+
+// ─── Notifications ──────────────────────────────────────────────────────────
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  type      String
+  title     String
+  message   String
+  bookingId String?   @map("booking_id")
+  reviewId  String?   @map("review_id")
+  metadata  Json?
+  isRead    Boolean   @default(false) @map("is_read")
+  readAt    DateTime? @map("read_at")
+  expiresAt DateTime? @map("expires_at")
+  priority  String    @default("normal")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id])
+  review  Review?  @relation(fields: [reviewId], references: [id])
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+  @@index([type])
+  @@map("notifications")
+}
+
+// ─── Slots / working days ───────────────────────────────────────────────────
+
+model DailySlotDay {
+  id          String   @id @default(uuid())
+  date        DateTime @unique @db.Date
+  isActive    Boolean  @default(true) @map("is_active")
+  notes       String?
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  createdBy User?           @relation("DailySlotsCreatedBy", fields: [createdById], references: [id])
+  slots     DailySlotTime[]
+
+  @@map("daily_slot_days")
+}
+
+model DailySlotTime {
+  id              String  @id @default(uuid())
+  dayId           String  @map("day_id")
+  startTime       String  @map("start_time")
+  endTime         String  @map("end_time")
+  maxBookings     Int     @default(1) @map("max_bookings")
+  currentBookings Int     @default(0) @map("current_bookings")
+  isAvailable     Boolean @default(true) @map("is_available")
+  notes           String?
+
+  day DailySlotDay @relation(fields: [dayId], references: [id], onDelete: Cascade)
+
+  @@index([dayId])
+  @@index([startTime])
+  @@map("daily_slot_times")
+}
+
+model WorkingDay {
+  id          String  @id @default(uuid())
+  dayOfWeek   Int     @unique @map("day_of_week") // 0–6
+  isWorking   Boolean @default(true) @map("is_working")
+  startTime   String? @map("start_time")
+  endTime     String? @map("end_time")
+  breakStart  String? @map("break_start")
+  breakEnd    String? @map("break_end")
+  isActive    Boolean @default(true) @map("is_active")
+  createdById String? @map("created_by_id")
+  updatedById String? @map("updated_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  createdBy User? @relation("WorkingDaysCreatedBy", fields: [createdById], references: [id])
+  updatedBy User? @relation("WorkingDaysUpdatedBy", fields: [updatedById], references: [id])
+
+  @@map("working_days")
+}
+
+// ─── Config / cities / settings ─────────────────────────────────────────────
+
+model BookingConfig {
+  id              String   @id @default(uuid())
+  configKey       String   @unique @map("config_key")
+  value           Float
+  currency        String   @default("INR")
+  description     String?
+  isActive        Boolean  @default(true) @map("is_active")
+  lastUpdatedById String?  @map("last_updated_by_id")
+  metadata        Json?
+  auditLog        Json?    @map("audit_log")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  lastUpdatedBy User? @relation("BookingConfigUpdatedBy", fields: [lastUpdatedById], references: [id])
+
+  @@index([isActive])
+  @@map("booking_configs")
+}
+
+model ServiceableCity {
+  id               String    @id @default(uuid())
+  city             String
+  state            String
+  country          String    @default("India")
+  isActive         Boolean   @default(true) @map("is_active")
+  displayName      String?   @map("display_name")
+  priority         Int       @default(0)
+  serviceRadius    Float?    @map("service_radius")
+  coveragePincodes String[]  @default([]) @map("coverage_pincodes")
+  launchDate       DateTime? @map("launch_date")
+  description      String?
+  notes            String?
+  bookingCount     Int       @default(0) @map("booking_count")
+  lastBookingAt    DateTime? @map("last_booking_at")
+  createdById      String?   @map("created_by_id")
+  updatedById      String?   @map("updated_by_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  createdBy User? @relation("ServiceableCityCreatedBy", fields: [createdById], references: [id])
+  updatedBy User? @relation("ServiceableCityUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([city, state])
+  @@index([isActive, priority])
+  @@map("serviceable_cities")
+}
+
+model SiteSettings {
+  id              String   @id @default(uuid())
+  version         Int      @default(1)
+  /// { hero, gallery, branding }
+  settings        Json
+  lastUpdatedById String?  @map("last_updated_by_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  lastUpdatedBy User? @relation("SiteSettingsUpdatedBy", fields: [lastUpdatedById], references: [id])
+
+  @@map("site_settings")
+}
+
+// ─── Enquiries / city requests / contact / newsletter ───────────────────────
+
+model Enquiry {
+  id              String    @id @default(uuid())
+  enquiryNumber   String    @unique @map("enquiry_number")
+  userId          String?   @map("user_id")
+  source          String?
+  userDetails     Json      @map("user_details")
+  serviceDetails  Json?     @map("service_details")
+  enquiryDetails  Json?     @map("enquiry_details")
+  status          String    @default("pending")
+  priority        String    @default("medium")
+  assignedToId    String?   @map("assigned_to_id")
+  resolvedAt      DateTime? @map("resolved_at")
+  adminNotes      Json?     @map("admin_notes")
+  internalComments String?  @map("internal_comments")
+  metadata        Json?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  user       User? @relation("UserEnquiries", fields: [userId], references: [id])
+  assignedTo User? @relation("EnquiryAssignee", fields: [assignedToId], references: [id])
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([userId])
+  @@index([assignedToId])
+  @@index([status, createdAt])
+  @@map("enquiries")
+}
+
+model CityRequest {
+  id             String    @id @default(uuid())
+  requestNumber  String    @unique @map("request_number")
+  userId         String?   @map("user_id")
+  requestedCity  String    @map("requested_city")
+  requestedState String?   @map("requested_state")
+  userDetails    Json?     @map("user_details")
+  message        String?
+  status         String    @default("pending")
+  source         String?
+  adminNotes     String?   @map("admin_notes")
+  resolvedAt     DateTime? @map("resolved_at")
+  resolvedById   String?   @map("resolved_by_id")
+  metadata       Json?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  user       User? @relation("UserCityRequests", fields: [userId], references: [id])
+  resolvedBy User? @relation("CityRequestResolver", fields: [resolvedById], references: [id])
+
+  @@index([requestedCity])
+  @@index([status])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("city_requests")
+}
+
+model ContactMessage {
+  id          String   @id @default(uuid())
+  name        String
+  email       String
+  phoneNumber String?  @map("phone_number")
+  message     String
+  status      String   @default("pending")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([email, status])
+  @@map("contact_messages")
+}
+
+model Newsletter {
+  id               String    @id @default(uuid())
+  email            String    @unique
+  status           String    @default("active")
+  subscribedAt     DateTime  @default(now()) @map("subscribed_at")
+  unsubscribedAt   DateTime? @map("unsubscribed_at")
+  unsubscribeToken String?   @unique @map("unsubscribe_token")
+  preferences      Json?
+  source           String?
+  metadata         Json?
+  emailsSent       Int       @default(0) @map("emails_sent")
+  lastEmailSentAt  DateTime? @map("last_email_sent_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("newsletters")
+}

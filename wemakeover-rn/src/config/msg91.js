@@ -1,0 +1,8 @@
+export const MSG91_WIDGET_ID =
+  process.env.EXPO_PUBLIC_MSG91_WIDGET_ID || "366944737148363932373136";
+
+export const MSG91_AUTH_TOKEN = process.env.EXPO_PUBLIC_MSG91_AUTH_TOKEN || "";
+
+export const MSG91_PHONE_OTP_ENABLED = Boolean(
+  MSG91_WIDGET_ID && MSG91_AUTH_TOKEN && MSG91_AUTH_TOKEN !== "{authToken}"
+);

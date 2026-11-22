@@ -1,0 +1,52 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-strip-types src/server.js",
+    "dev": "nodemon --exec \"node --experimental-strip-types\" src/server.js",
+    "seed:admin": "node --experimental-strip-types src/scripts/seedAdminUser.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:ping": "node --experimental-strip-types src/scripts/pingPostgres.js",
+    "db:check": "node --experimental-strip-types src/scripts/checkPostgres.js",
+    "db:backup": "node --experimental-strip-types src/scripts/backupPostgres.js",
+    "db:studio": "prisma studio",
+    "smoke:referral": "node --experimental-strip-types src/scripts/smokeReferral.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.975.0",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "bcryptjs": "^3.0.2",
+    "cloudinary": "^2.8.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "express-fileupload": "^1.5.2",
+    "express-session": "^1.18.2",
+    "firebase-admin": "^14.1.0",
+    "google-auth-library": "^9.15.1",
+    "helmet": "^8.1.0",
+    "ioredis": "^5.7.0",
+    "jsonwebtoken": "^9.0.2",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^7.0.5",
+    "nodemon": "^3.1.10",
+    "otp-generator": "^4.0.1",
+    "pg": "^8.22.0",
+    "razorpay": "^2.9.6"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.3",
+    "prisma": "^7.9.1"
+  }
+}

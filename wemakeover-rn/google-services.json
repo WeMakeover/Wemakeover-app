@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "147828011193",
+    "project_id": "wemakeover-20ff4",
+    "storage_bucket": "wemakeover-20ff4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:147828011193:android:43e74f1fc98b74e207eb68",
+        "android_client_info": {
+          "package_name": "com.wemakeover.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD9OMYC5L2DtGd5a2qODecu7BbsE2Pu-MA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,47 @@
+# Dependencies & builds
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+.expo/
+**/web-build/
+**/ios/
+**/android/
+
+# Env & secrets — never commit
+.env
+.env.*
+!**/.env.example
+**/.env
+**/.env.*
+!**/.env.example
+**/serviceAccountKey.json
+**/*serviceAccount*.json
+**/firebase-adminsdk*.json
+**/*.pem
+**/*.jks
+**/*.p8
+**/*.p12
+**/*.mobileprovision
+
+# Prisma generated client
+server/src/generated/
+
+# Logs & OS
+logs/
+*.log
+.DS_Store
+Thumbs.db
+
+# Editor / local
+.idea/
+.vscode/
+.cursor/
+*.local
+.api-tunnel-url
+.api-tunnel-log.txt
+**/backups/
+
+# Nested repo backups (after monorepo flatten)
+**/.git-nested-backup/
